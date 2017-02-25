@@ -81,6 +81,7 @@ window.addEventListener('load', function() {
             renderer.render(scene, camera);
         } else if (options.strategy === 'Ray Marching') {
             rayMarcher.render(proxyGeometry.buffer);
+            rayMarcher.update();
         }
         stats.end();
         requestAnimationFrame(tick);
