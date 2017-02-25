@@ -1,7 +1,7 @@
 
 #define MAX_GEOMETRY_COUNT 100
 #define MAX_DISTANCE 50.0
-#define MAX_ITERATIONS 50
+#define MAX_ITERATIONS 128
 #define EPSILON 0.00001
 
 /* This is how I'm packing the data
@@ -19,7 +19,10 @@ uniform float u_time;
 
 varying vec2 f_uv;
 
-// inverts a homogenous transformation matrix
+
+/// --------- Matrix Ops -----------
+
+
 mat4 inverseHomogenous(in mat4 t) {
 	mat3 rot = mat3(vec3(t[0][0], t[1][0], t[2][0]),
 		vec3(t[0][1], t[1][1], t[2][1]), 
@@ -32,21 +35,99 @@ mat4 inverseHomogenous(in mat4 t) {
 	return inv;
 }
 
+mat4 transpose(in mat4 t) {
+	return mat4(vec4(t[0][0], t[1][0], t[2][0], t[3][0]),
+		vec4(t[0][1], t[1][1], t[2][1], t[3][1]), 
+		vec4(t[0][2], t[1][2], t[2][2], t[3][2]), 
+		vec4(t[0][3], t[1][3], t[2][3], t[3][3]));
+}
 
+/// -------- Shapes ----------
+
+// sphere: radius is r
 float sphere(in vec4 p, in mat4 t, in float r) {
 	vec4 q = inverseHomogenous(t) * p;
 	return length(q.xyz) - r;
 }
 
+// box: xyz dimensions stored in r
 float box(in vec4 p, in mat4 t, in vec3 r) {
 	vec3 q = (inverseHomogenous(t) * p).xyz;
 	vec3 d = abs(q) - r;
 	return min(max(d.x, max(d.y, d.z)), 0.0) + length(max(d, 0.0));
 }
 
-float s2(in vec3 p, in float r) {
-	return length(p) - r;
+// torus: r[0] is radius, r[1] is thickness
+float torus(in vec4 p, in mat4 t, in vec2 r) {
+	vec4 q = inverseHomogenous(t) * p;
+	vec2 s = vec2(length(q.xz) - r.x, q.y);
+	return length(s) - r.y;
 }
+
+float l8(in vec2 v) {
+	vec2 t = v * v;
+	t = t * t;
+	t = t * t;
+
+	return pow((t.x + t.y), 0.125);
+}
+
+float pipe(in vec4 p, in mat4 t, in vec2 r) {
+	vec4 q = inverseHomogenous(t) * p;
+	vec2 s = vec2(length(q.xz) - r.x, q.y);
+	return l8(s) - r.y;
+}
+
+
+float cylinder(in vec4 p, in mat4 t, in vec3 c) {
+	vec4 q = inverseHomogenous(t) * p;
+	vec2 d = abs(vec2(length(q.xz), q.y)) - c.y;
+	return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+}
+
+float plane(in vec4 p, in vec3 n, in float disp) {
+	return dot(p.xyz, n) + disp;
+}
+
+
+/// -------- Materials -----------
+
+//  IQ's trusty color palette
+vec3 palette( in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d ){
+    return a + b * cos(6.28318 * (c * t + d));
+}
+
+float blinn(in vec3 n, in vec3 e, in vec3 l) {
+	vec3 h = normalize(e + l);
+	return max(0.0, (dot(h, n)));
+}
+
+vec3 metallicMat(in vec3 n, in vec3 e, in vec3 l, in mat4 v) {
+	//n = (transpose(v) * (vec4(n, 0.0))).xyz;
+	e = (normalize(e));
+	float shine = blinn(n, 1.0 - e, l);
+	shine = shine * shine;
+	shine = shine * shine;
+	
+
+	float ref = abs(dot(normalize(reflect(e, n)), vec3(0.0, 1.0, 0.0)));
+	float fres = 1.0 - abs(dot(n, e));
+	fres = fres * fres;
+	vec3 a = vec3(0.498, 0.578, 0.708);
+	vec3 b = vec3(0.278, 0.158, 0.068);
+	vec3 c = vec3(0.538, 0.618, 1.000);
+	vec3 d = vec3(0.538, 0.538, 0.667);
+	vec3 pal = palette(ref, a, b, c, d);
+
+	return mix(vec3(shine), pal, fres);
+	//return e;
+	//return pal;
+	//return 0.5 * n + 0.5;
+	//return vec3(fres);
+}
+
+
+/// -------- Domain Operations ---------
 
 
 vec3 tileXYZ(in vec3 p, in vec3 t) {
@@ -64,7 +145,8 @@ float smin( float a, float b, float k )
     return mix(b, a, h) - k * h * (1.0 - h);
 }
 
-// the entire scene of boold objects
+
+// the entire scene of SDF objects
 float map(in vec3 pos) {
 	vec4 p = vec4(pos, 1.0);
 	mat4 m1 = mat4(vec4(1, 0, 0, 0),
@@ -76,30 +158,66 @@ float map(in vec3 pos) {
 		vec4(0, 0, 1, 0),
 		vec4(0, 0, 0, 1));
 
-	float b = box(p, m1, vec3(2.0, 1.0, 0.5));
-	float s = sphere(vec4(tileXZ(pos, vec2(3.0 + 2.0 * sin(u_time), 2.0)), 1.0), m2, 0.5);
+	float b = cylinder(p, m1, vec3(2.0, 1.0, 1.0));
+	float s = sphere(vec4(tileXZ(pos, vec2(2.0 + sin(u_time), 2.0 + cos(u_time))), 1.0), m2, 0.5);
 
+	float tor = torus(p, m2, vec2(1.0, 0.1));
+	float tor2 = pipe(p, m2, vec2(3.0, 1.0));
+	float ground = plane(p, vec3(0.0, 1.0, 0.0), 0.0);
 	float m = smin(b, s, 0.2);
+	m = smin(tor2, s, 0.2);
+	m = smin(m, ground, 0.3);
 
 	return m;
-	//return s2(pos, 1.0);
 }
 
-vec3 trace(in vec3 origin, in vec3 dir, inout float dist) {
+vec3 normals(in vec3 pos) {
+	return normalize(vec3(map(pos + vec3(EPSILON, 0, 0)) - map(pos - vec3(EPSILON, 0, 0)),
+		map(pos + vec3(0, EPSILON, 0)) - map(pos - vec3(0, EPSILON, 0)),
+		map(pos + vec3(0, 0, EPSILON)) - map(pos - vec3(0, 0, EPSILON))));
+}
+
+float occlusion(in vec3 origin, in vec3 normal) {
+	float occ = 0.0;
+	float divisor = 1.0;
+	float step = 0.09;
+	vec3 pos = origin;
+
+	for(int i = 1; i < 5; i++) {
+		divisor *= 2.0;
+		pos = origin + step * normal;
+		float diff = float(i) * step - map(pos);
+		occ += diff / divisor;
+	}
+
+	return occ;
+}
+
+vec3 trace(in vec3 origin, in vec3 dir, inout float dist, in mat4 view) {
 
 	// default color
-	vec3 col = vec3(0, 0, 0);
-	float minStep = 0.0001;
+	vec3 col = vec3(0.5, 0.7, 1.0);
+	float minStep = 0.002;
 	vec3 pos = origin;
 
 	float dt = map(origin);
 	dist = 0.0;
 	for(int i = 0; i < MAX_ITERATIONS; i++) {
 		dist += dt;
+		if (dist > MAX_DISTANCE) return col;
 		pos += dt * dir;
 		float nd = map(pos);
-		if (nd < 0.001 && nd > 0.0) {
-			return vec3(1.0 - float(i) / float(MAX_ITERATIONS));
+		if (nd < 0.002 && nd > 0.0) {
+			//return vec3(1.0 - float(i) / float(MAX_ITERATIONS));
+			//return mix(0.5 * normals(pos) + 0.5, col, dist / MAX_DISTANCE);
+			vec3 n = normals(pos);
+			float b = blinn(n, vec3(1.0) - dir, vec3(0, 2, 0));
+			b = b * b * b;
+			vec3 m = metallicMat(n, normalize(pos - origin), vec3(3, 5, 0), view);
+			float occ = 1.0 - 2.0 * occlusion(pos, n);
+			//return vec3(occ);
+			return mix(occ * m, col, dist / MAX_DISTANCE);
+			//return 0.5 * n + 0.5;
 		}
 		dt = nd > minStep? nd : minStep;
 	}
@@ -112,7 +230,7 @@ void main() {
     vec4 cameraPos = u_camera[3];
     vec4 ref = u_camera * vec4(0.0, 0.0, 0.1, 1.0);
 
-    cameraPos = vec4(15.0 * cos(u_time), 4.0 + 2.0 * sin(0.5 * u_time), 15.0 * sin(u_time), 1.0);
+    cameraPos = vec4(15.0 * cos(u_time), 7.0 + 2.0 * sin(0.5 * u_time), 15.0 * sin(u_time), 1.0);
     ref = vec4(0.0, 0.0, 0.0, 1.0);
 
     float len = length(ref.xyz - cameraPos.xyz);
@@ -122,13 +240,15 @@ void main() {
     vec3 p = ref.xyz + u_aspect * (f_uv.x - 0.5)  * len * u_thfov * R +
     (f_uv.y - 0.5) *len * u_thfov * U;
 
+    mat4 vmat = transpose(mat4(vec4(R, 0), vec4(U, 0.0), vec4(F, 0.0), vec4(0.0, 0.0, 0.0, 1.0)));
+
     vec3 dir = normalize(p - cameraPos.xyz);
     // cast the ray
     float t = 0.0;
-    vec3 col = trace(cameraPos.xyz, dir, t);
+    vec3 col = trace(cameraPos.xyz, dir, t, vmat);
 
   
-    if (col.x < 0.0) col = vec3(1.0, 0.0, 0.0);
+    //if (col.x < 0.0) col = vec3(1.0, 0.0, 0.0);
 
     //col = 0.5 * vec3(dir.x + 1.0, dir.y + 1.0, dir.z + 1.0);
     //col = vec3(dot(dir, F));

@@ -44,7 +44,7 @@ window.addEventListener('load', function() {
     var gui = new DAT.GUI();
 
     var options = {
-        strategy: 'Proxy Geometry'
+        strategy: 'Ray Marching'
     }
 
     gui.add(options, 'strategy', ['Proxy Geometry', 'Ray Marching']);
