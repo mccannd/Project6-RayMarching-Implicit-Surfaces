@@ -73,6 +73,12 @@ window.addEventListener('load', function() {
     
     var rayMarcher = new RayMarcher(renderer, scene, camera);
 
+    var obj = { ToggleCamera:function(){ rayMarcher.toggleCamera()},
+            ToggleShadows:function(){ rayMarcher.toggleShadows()}};
+
+    gui.add(obj,'ToggleCamera');
+    gui.add(obj,'ToggleShadows');
+
     (function tick() {
         controls.update();
         stats.begin();

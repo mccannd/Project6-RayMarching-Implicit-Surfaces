@@ -13,9 +13,11 @@ struct geometry_t {
 uniform vec4 u_buffer[MAX_GEOMETRY_COUNT];
 uniform int u_count;
 uniform mat4 u_camera;
+uniform mat3 u_view;
 uniform float u_thfov;
 uniform float u_aspect;
 uniform float u_time;
+uniform int u_useShadow;
 
 varying vec2 f_uv;
 
@@ -98,6 +100,12 @@ float plane(in vec4 p, in vec3 n, in float disp) {
 	return dot(p.xyz, n) + disp;
 }
 
+// Hex prism SDF by Mark Lundin
+float hexPrism(in vec4 p, in mat4 t, in vec2 h) {
+	vec4 q = abs(inverseHomogenous(t) * p);
+	return max(q.y - h.y, max((q.x * 0.866025 + q.z * 0.5), q.z) - h.x);
+}
+
 
 /// -------- Materials -----------
 
@@ -125,10 +133,6 @@ vec3 metallicMat(in vec3 n, in vec3 e, in vec3 l) {
 		vec3(0.538, 0.538, 0.667));
 
 	return mix(vec3(shine), pal, fres);
-	//return e;
-	//return pal;
-	//return 0.5 * n + 0.5;
-	//return vec3(fres);
 }
 
 
@@ -142,6 +146,8 @@ vec3 tileXYZ(in vec3 p, in vec3 t) {
 vec3 tileXZ(in vec3 p, in vec2 t) {
 	return vec3(mod(p.x, t.x) - 0.5 * t.x, p.y, mod(p.z, t.y) - 0.5 * t.y);
 }
+
+
 
 // IQ's implementation of Blending
 float smin( float a, float b, float k )
@@ -166,12 +172,22 @@ float map(in vec3 pos) {
 	float b = cylinder(p, m1, vec3(2.0, 1.0, 1.0));
 	float s = sphere(vec4(tileXZ(pos, vec2(2.0 + sin(u_time), 2.0 + cos(u_time))), 1.0), m2, 0.5);
 
+
+
 	float tempTime = 2.0 * fract(0.5 * u_time) - 1.0;
 	float pistonTime = clamp(tempTime, 0.2, 1.0);
 	float pistonDisp = sin(3.1415962 * 1.25 * (clamp(tempTime, -0.8, 0.0)));
-	mat4 pistonRot = rotY(-6.283192 * 1.25 * (pistonTime - 0.2));
+	mat4 pistonRot = rotY(-3.1415962 * 1.25 * (pistonTime - 0.2));
 	pistonRot[3] = vec4(0.0, pistonDisp, 0.0, 1.0);
+
 	float piston = box(p, pistonRot, vec3(0.5, 2.0, 0.5));
+	for (int i = 0; i < 6; i++) {
+		float f = float(i);
+		pistonRot[3] = vec4(3.0 *cos(1.047196 * f), pistonDisp,  3.0 *sin(1.047196 * f),1.0);
+		//float p2 = box(p, pistonRot, vec3(0.5, 2.0, 0.5));
+		float p3 = hexPrism(p, pistonRot, vec2(0.5, 2.0));
+		piston = min(piston, p3);
+	}
 
 	float tor = torus(p, m2, vec2(1.0, 0.1));
 	float tor2 = pipe(p, m2, vec2(3.0, 1.0));
@@ -195,7 +211,7 @@ vec3 normals(in vec3 pos) {
 float shadow(in vec3 origin, in vec3 dir, in float limit) {
 	float s = 1.0;
 	//float t = 0.02;
-	float step = 0.02;
+	float step = 0.002;
 	float t = 0.1;
 
 	for (int i = 0; i < MAX_ITERATIONS; i++) {
@@ -250,8 +266,10 @@ vec3 trace(in vec3 origin, in vec3 dir, inout float dist) {
 			vec3 n = normals(pos);
 			vec3 m = metallicMat(n, dir, ldir);
 			float occ = occlusion(pos, n);
-			float sha = 0.5 + 0.5 * shadow(pos, ldir, length(light - pos));
-			//return vec3(occ);
+			float sha = 1.0;
+			if (u_useShadow == 1) {
+				sha = 0.5 + 0.5 * shadow(pos, ldir, length(light - pos));
+			}
 			return mix(sha * occ * m, col, dist / MAX_DISTANCE);
 			//return 0.5 * n + 0.5;
 		}
@@ -263,22 +281,26 @@ vec3 trace(in vec3 origin, in vec3 dir, inout float dist) {
 
 void main() {
     // cast ray in NDC
-    //vec4 cameraPos = u_camera[3];
-    //vec4 ref = u_camera * vec4(0.0, 0.0, 0.1, 1.0);
+    vec4 cameraPos = u_camera[3];
+    vec3 F = u_view[2];
+    vec3 R = u_view[0];
+    vec3 U = u_view[1];
+
+    vec3 ref = cameraPos.xyz + 0.1 * F;
 	//vec4 cameraPos = vec4(15.0, 
     	//7.0 + 2.0 * sin(0.5 * u_time), 
     	//0.0, 1.0);
 	
-    vec4 cameraPos = vec4(15.0 * cos(u_time), 
-    	7.0 + 2.0 * sin(0.5 * u_time), 
-    	15.0 * sin(u_time), 1.0);
+    //vec4 cameraPos = vec4(15.0 * cos(u_time), 
+    	//7.0 + 2.0 * sin(0.5 * u_time), 
+    	//15.0 * sin(u_time), 1.0);
    
-    vec4 ref = vec4(0.0, 0.0, 0.0, 1.0);
+    //vec4 ref = vec4(0.0, 0.0, 0.0, 1.0);
 
-    float len = length(ref.xyz - cameraPos.xyz);
-    vec3 F = normalize(ref.xyz - cameraPos.xyz);
-    vec3 R = normalize(cross(F, vec3(0., 1., 0.)));
-    vec3 U = normalize(cross(R, F));
+    float len = 0.1;
+    //vec3 F = normalize(ref.xyz - cameraPos.xyz);
+    //vec3 R = normalize(cross(F, vec3(0., 1., 0.)));
+    //vec3 U = normalize(cross(R, F));
     vec3 p = ref.xyz + u_aspect * (f_uv.x - 0.5)  * len * u_thfov * R +
     (f_uv.y - 0.5) * len * u_thfov * U;
 

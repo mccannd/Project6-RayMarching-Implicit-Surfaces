@@ -5,6 +5,8 @@ import {PROXY_BUFFER_SIZE} from './proxy_geometry'
 
 var clock = new THREE.Clock();
 var t = 0.0;
+var useCPUCamera = false;
+var useShadows = false
 
 export default function RayMarcher(renderer, scene, camera) {
     var composer = new EffectComposer(renderer);
@@ -34,6 +36,15 @@ export default function RayMarcher(renderer, scene, camera) {
             u_time: {
                 type: 'f',
                 value: t
+            },
+
+            u_view: {
+                type: 'm3',
+                value: new THREE.Matrix3()
+            },
+            u_useShadow: {
+                type: 'i',
+                value: useShadows
             }
         },
         vertexShader: require('./glsl/pass-vert.glsl'),
@@ -51,12 +62,37 @@ export default function RayMarcher(renderer, scene, camera) {
         },
 
         update: function() {
-            //camera.updateMatrixWorld();
-            //shaderPass.material.uniforms.u_camera.value = camera.matrix;
-            
+            var F = new THREE.Vector3(0, 0, -1);
+            camera.updateMatrixWorld();
+
+            if (useCPUCamera) {
+                F.applyQuaternion(camera.quaternion);
+                shaderPass.material.uniforms.u_camera.value = camera.matrix;
+            } else {
+                var pos = new THREE.Vector3(15.0 * Math.cos(t), 
+                    7.0 - 2.0 * Math.sin(0.5 * t), 15.0 * Math.sin(t));
+                F = F.subVectors(new THREE.Vector3(0, 0, 0), pos).normalize();
+                shaderPass.material.uniforms.u_camera.value = (new THREE.Matrix4()).makeTranslation(pos.x, pos.y, pos.z);
+            }
+
+            var R = (new THREE.Vector3(0, 0, 0)).crossVectors(F, new THREE.Vector3(0, 1, 0)).normalize();
+            var U = (new THREE.Vector3(0, 0, 0)).crossVectors(R, F).normalize();
+            var view = new THREE.Matrix3();
+            view.set(R.x, U.x, F.x, R.y, U.y, F.y, R.z, U.z, F.z);
+  
+            shaderPass.material.uniforms.u_view.value = view;
             shaderPass.material.uniforms.u_aspect.value = window.innerWidth / window.innerHeight;
             t += clock.getDelta();
             shaderPass.material.uniforms.u_time.value = t;
+        },
+
+        toggleCamera: function() {
+            useCPUCamera = !useCPUCamera;
+        },
+
+        toggleShadows: function() {
+            useShadows = !useShadows;
+            shaderPass.material.uniforms.u_useShadow.value = useShadows;
         }
     }
 }
