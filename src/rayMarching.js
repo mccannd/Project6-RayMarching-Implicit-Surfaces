@@ -51,8 +51,8 @@ export default function RayMarcher(renderer, scene, camera) {
         },
 
         update: function() {
-            camera.updateMatrixWorld();
-            shaderPass.material.uniforms.u_camera.value = camera.matrix;
+            //camera.updateMatrixWorld();
+            //shaderPass.material.uniforms.u_camera.value = camera.matrix;
             
             shaderPass.material.uniforms.u_aspect.value = window.innerWidth / window.innerHeight;
             t += clock.getDelta();
